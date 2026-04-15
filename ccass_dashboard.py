@@ -43,11 +43,17 @@ def fetch_ccass_changes(issue_id, date_val=None):
     
     headers = {
         'Referer': f'https://webbsite.0xmd.com/ccass/choldings.asp?i={issue_id}',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-HK,en;q=0.9,zh-HK;q=0.8,zh;q=0.7',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+        'Cache-Control': 'max-age=0',
     }
 
     try:
-        time.sleep(random.uniform(2.0, 5.0))
+        time.sleep(random.uniform(3.0, 7.0))
         
         # 1. First Attempt
         try:
