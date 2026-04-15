@@ -9,7 +9,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 def fetch_data(ticker):
     try:
-        # 1. Get Issue ID
+        # Step 1: Resolve Issue ID
         search_url = f"https://webbsite.0xmd.com/dbpub/stocksearch.asp?s={ticker}"
         resp = requests.get(search_url, impersonate="chrome120", timeout=15)
         import re
@@ -17,7 +17,7 @@ def fetch_data(ticker):
         if not match: return None
         issue_id = match.group(1)
 
-        # 2. Check last 5 days
+        # Step 2: Iterate back through 5 days
         for days_back in range(5):
             check_date = (datetime.datetime.utcnow() + datetime.timedelta(hours=8) - datetime.timedelta(days=days_back)).strftime('%Y-%m-%d')
             url = f"https://webbsite.0xmd.com/ccass/chldchg.asp?i={issue_id}&sort=chngdn&d={check_date}"
@@ -26,38 +26,38 @@ def fetch_data(ticker):
             data_resp = requests.get(url, impersonate="chrome120", timeout=20)
             soup = BeautifulSoup(data_resp.text, 'html.parser')
             
-            tables = soup.find_all('table')
-            for table in tables:
-                rows = table.find_all('tr')
-                if len(rows) < 2: continue
-                
-                # Check headers for "Name" and "Change"
-                headers = [th.get_text(strip=True).lower() for th in rows[0].find_all(['th', 'td'])]
-                name_idx = next((i for i, h in enumerate(headers) if 'name' in h), None)
-                change_idx = next((i for i, h in enumerate(headers) if 'change' in h and 'stake' not in h), None)
-                stake_idx = next((i for i, h in enumerate(headers) if 'stake' in h and 'change' in h), None)
+            rows = soup.find_all('tr')
+            extracted_data = []
 
-                if name_idx is not None and change_idx is not None:
-                    data = []
-                    for row in rows[1:]:
-                        cols = row.find_all(['td', 'th'])
-                        if len(cols) <= max(name_idx, change_idx): continue
-                        
-                        name = cols[name_idx].get_text(strip=True)
-                        change_txt = cols[change_idx].get_text(strip=True).replace(',', '').replace('+', '')
-                        stake_txt = cols[stake_idx].get_text(strip=True) if stake_idx is not None else "0%"
-                        
-                        try:
-                            val = float(change_txt) if change_txt else 0
-                            if val != 0 and 'total' not in name.lower():
-                                data.append({"Name": name[:20], "Change": int(val), "Δ%": stake_txt})
-                        except: continue
-                    
-                    if data:
-                        return {"date": check_date, "df": pd.DataFrame(data)}
+            for row in rows:
+                cells = [c.get_text(strip=True) for c in row.find_all(['td', 'th'])]
+                if len(cells) < 3: continue
+
+                # Look for rows that have a number with a '+' or '-' or a large integer
+                # and don't contain 'Total'
+                row_text = " ".join(cells).lower()
+                if 'total' in row_text or 'participants' in row_text:
+                    continue
+
+                # Attempt to find the "Change" column by looking for numbers that aren't the Ticker
+                for i, cell in enumerate(cells):
+                    clean_val = cell.replace(',', '').replace('+', '')
+                    if clean_val.lstrip('-').isdigit():
+                        val = int(clean_val)
+                        if val != 0 and abs(val) > 100: # Ignore tiny rounding errors
+                            # We found a movement row! 
+                            # Usually: Name is Col 0 or 1, Change is Col 2 or 3
+                            name = cells[0] if i > 0 else cells[1]
+                            stake = cells[-1] if '%' in cells[-1] else "N/A"
+                            extracted_data.append({"Name": name[:20], "Change": val, "Stake": stake})
+                            break # Move to next row
+            
+            if extracted_data:
+                return {"date": check_date, "df": pd.DataFrame(extracted_data)}
+        
         return "NO_CHANGES"
     except Exception as e:
-        print(f"Error on {ticker}: {e}")
+        print(f"Aggressive Scraper Error: {e}")
         return None
 
 def send_telegram(text):
