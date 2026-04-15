@@ -37,7 +37,7 @@ def get_issue_id(ticker):
 @st.cache_data(ttl=3600)  # Cache for 1 hour
 def fetch_ccass_changes(issue_id, date_val=None):
     # Expanded browser list for better rotation
-    browsers = ["chrome120", "chrome119", "safari_17_0", "edge_120", "chrome116"]
+    browsers = ["chrome", "chrome110", "chrome120", "edge101"]
     
     # Webb-site change URL
     base_url = f"https://webbsite.0xmd.com/ccass/chldchg.asp?i={issue_id}&sort=chngdn"
@@ -51,7 +51,10 @@ def fetch_ccass_changes(issue_id, date_val=None):
 
     try:
         # Random sleep to mimic human browsing (2 to 5 seconds)
-        time.sleep(random.uniform(2.0, 5.0)) 
+        time.sleep(random.uniform(2.0, 5.0))
+
+        # Select a browser and use a fallback if one fails
+        selected_browser = random.choice(browsers) 
         
         # Use curl_cffi to bypass TLS fingerprinting (403 fix)
         resp = requests.get(
@@ -60,6 +63,14 @@ def fetch_ccass_changes(issue_id, date_val=None):
             impersonate=random.choice(browsers), 
             timeout=25
         )
+    except Exception:
+            # Fallback to standard 'chrome' if a specific version fails
+            resp = requests.get(
+                base_url, 
+                headers=headers, 
+                impersonate="chrome", 
+                timeout=25
+            )
         
         if resp.status_code == 403:
             return "403_BLOCK", None
