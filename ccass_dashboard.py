@@ -3,6 +3,8 @@ import pandas as pd
 import json
 from curl_cffi import requests
 import io
+import random
+import time
 
 # 1. Page Configuration
 st.set_page_config(page_title="HK CCASS 1-Day Change", layout="wide")
@@ -45,18 +47,33 @@ def fetch_ccass_changes(issue_id, date_val=None):
     if date_val:
         base_url += f"&d={date_val}"
     
+    # Randomize the User-Agent slightly to avoid a static fingerprint
+    user_agents = [
+        "chrome110", "chrome116", "chrome120", "safari_17_0"
+    ]
+    selected_browser = random.choice(user_agents)
+
     headers = {
         'Referer': f'https://webbsite.0xmd.com/ccass/choldings.asp?i={issue_id}',
+        'Accept-Language': 'en-US,en;q=0.9',
     }
 
     try:
-        resp = requests.get(base_url, headers=headers, impersonate="chrome120", timeout=20)
+        # Add a tiny random delay (human-like behavior)
+        time.sleep(random.uniform(1.0, 3.0))
+        
+        resp = requests.get(
+            base_url, 
+            headers=headers, 
+            impersonate=selected_browser, 
+            timeout=25
+        )
         
         if resp.status_code == 403:
-            return "403_ERROR", None
-        
-        # REMOVED engine='lxml' to support older Pandas versions
+            return "ACCESS_DENIED_BY_WEBSITE", None
+            
         tables = pd.read_html(io.StringIO(resp.text))
+        # ... (rest of your existing logic for table parsing)
         
         for df in tables:
             if 'Change' in df.columns:
