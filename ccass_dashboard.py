@@ -72,9 +72,6 @@ def fetch_ccass_changes(issue_id, date_val=None):
                 timeout=25
             )
         
-        if resp.status_code == 403:
-            return "403_BLOCK", None
-        
         # Parse all tables on the page
         # Using io.StringIO to avoid future warnings from Pandas
         tables = pd.read_html(io.StringIO(resp.text))
