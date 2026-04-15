@@ -12,7 +12,6 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 def fetch_data(ticker):
-    # Search for Issue ID first
     search_url = f"https://webbsite.0xmd.com/dbpub/stocksearch.asp?s={ticker}"
     try:
         resp = requests.get(search_url, impersonate="chrome120", timeout=15)
@@ -21,8 +20,8 @@ def fetch_data(ticker):
         if not match: return None
         issue_id = match.group(1)
 
-        # CHECK LAST 3 DAYS: In case today's report isn't live yet
-        for days_back in range(4):
+        # Look back 5 days to be absolutely safe (covers long weekends)
+        for days_back in range(5):
             check_date = (datetime.datetime.utcnow() + datetime.timedelta(hours=8) - datetime.timedelta(days=days_back)).strftime('%Y-%m-%d')
             url = f"https://webbsite.0xmd.com/ccass/chldchg.asp?i={issue_id}&sort=chngdn&d={check_date}"
             
@@ -32,25 +31,34 @@ def fetch_data(ticker):
             if "<table" not in data_resp.text.lower():
                 continue
 
+            # Read ALL tables on the page
             tables = pd.read_html(io.StringIO(data_resp.text))
             for df in tables:
-                # Find any column that looks like 'Change'
-                change_col = next((c for c in df.columns if 'change' in str(c).lower()), None)
+                # 1. Standardize columns to lowercase for easy searching
+                df.columns = [str(c).strip().lower() for c in df.columns]
                 
-                if change_col and 'Name' in df.columns:
-                    df = df[~df['Name'].isin(['Total', 'Unnamed Investor Participants'])].copy()
+                # 2. Look for 'name' and any column containing 'change'
+                name_col = next((c for c in df.columns if 'name' in c), None)
+                change_col = next((c for c in df.columns if 'change' in c), None)
+                stake_col = next((c for c in df.columns if 'stake' in c and '%' in c), None)
+
+                if name_col and change_col:
+                    # Clean the data
                     df[change_col] = pd.to_numeric(df[change_col].astype(str).str.replace(',', ''), errors='coerce')
-                    df = df[df[change_col] != 0].dropna(subset=['Name'])
                     
-                    if not df.empty:
-                        df = df.rename(columns={change_col: 'Change'})
-                        # Return with the date found so you know which day it is
-                        return {"date": check_date, "df": df[['Name', 'Change', 'Stake Δ %']]}
+                    # Filter for moves that aren't zero and aren't the "Total" row
+                    move_df = df[(df[change_col] != 0) & 
+                                (~df[name_col].str.contains('total|participants', case=False, na=False))].copy()
+                    
+                    if not move_df.empty:
+                        # Success! Reformat for the message
+                        display_df = move_df[[name_col, change_col, stake_col or change_col]].copy()
+                        display_df.columns = ['Name', 'Change', 'Stake %']
+                        return {"date": check_date, "df": display_df}
         
         return "NO_CHANGES"
-        
     except Exception as e:
-        print(f"Error fetching {ticker}: {e}")
+        print(f"Scraper Error for {ticker}: {e}")
         return None
 
 def send_telegram(text):
