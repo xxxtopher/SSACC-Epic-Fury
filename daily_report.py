@@ -12,10 +12,7 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 def fetch_data(ticker):
-    hk_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
-    today_str = hk_now.strftime('%Y-%m-%d')
-    
-    # 1. Get Issue ID
+    # Search for Issue ID first
     search_url = f"https://webbsite.0xmd.com/dbpub/stocksearch.asp?s={ticker}"
     try:
         resp = requests.get(search_url, impersonate="chrome120", timeout=15)
@@ -23,36 +20,33 @@ def fetch_data(ticker):
         match = re.search(r'i=(\d+)', resp.url) or re.search(r'i=(\d+)', resp.text)
         if not match: return None
         issue_id = match.group(1)
-        
-        # 2. Targeted URL with the date you specified
-        url = f"https://webbsite.0xmd.com/ccass/chldchg.asp?i={issue_id}&sort=chngdn&d={today_str}"
-        
-        time.sleep(random.uniform(3, 6))
-        data_resp = requests.get(url, impersonate="chrome120", timeout=20)
-        
-        # 3. Robust Table Search
-        tables = pd.read_html(io.StringIO(data_resp.text))
-        for df in tables:
-            # Look for any column that sounds like 'Change' (case-insensitive)
-            change_col = next((c for c in df.columns if 'change' in str(c).lower()), None)
+
+        # CHECK LAST 3 DAYS: In case today's report isn't live yet
+        for days_back in range(4):
+            check_date = (datetime.datetime.utcnow() + datetime.timedelta(hours=8) - datetime.timedelta(days=days_back)).strftime('%Y-%m-%d')
+            url = f"https://webbsite.0xmd.com/ccass/chldchg.asp?i={issue_id}&sort=chngdn&d={check_date}"
             
-            if change_col and 'Name' in df.columns:
-                # Filter out garbage rows
-                df = df[~df['Name'].isin(['Total', 'Unnamed Investor Participants'])].copy()
+            time.sleep(random.uniform(2, 4))
+            data_resp = requests.get(url, impersonate="chrome120", timeout=20)
+            
+            if "<table" not in data_resp.text.lower():
+                continue
+
+            tables = pd.read_html(io.StringIO(data_resp.text))
+            for df in tables:
+                # Find any column that looks like 'Change'
+                change_col = next((c for c in df.columns if 'change' in str(c).lower()), None)
                 
-                # Convert change column to numeric
-                df[change_col] = pd.to_numeric(df[change_col].astype(str).str.replace(',', ''), errors='coerce')
-                
-                # Filter for actual movement
-                df = df[df[change_col] != 0].dropna(subset=['Name'])
-                
-                if not df.empty:
-                    # Rename for consistent display in Telegram
-                    df = df.rename(columns={change_col: 'Change'})
-                    # Return essential columns (adjust names if Stake % is different)
-                    cols = [c for c in ['Name', 'Change', 'Stake Δ %', '% Stake Δ'] if c in df.columns]
-                    return df[cols]
+                if change_col and 'Name' in df.columns:
+                    df = df[~df['Name'].isin(['Total', 'Unnamed Investor Participants'])].copy()
+                    df[change_col] = pd.to_numeric(df[change_col].astype(str).str.replace(',', ''), errors='coerce')
+                    df = df[df[change_col] != 0].dropna(subset=['Name'])
                     
+                    if not df.empty:
+                        df = df.rename(columns={change_col: 'Change'})
+                        # Return with the date found so you know which day it is
+                        return {"date": check_date, "df": df[['Name', 'Change', 'Stake Δ %']]}
+        
         return "NO_CHANGES"
         
     except Exception as e:
@@ -75,12 +69,10 @@ for stock in STOCKS:
     result = fetch_data(stock)
     final_message += f"<b>Stock: {stock}</b>\n"
     
-    if isinstance(result, pd.DataFrame):
-        # Format table for mobile
-        final_message += f"<pre>{result.to_string(index=False)}</pre>\n\n"
-    elif result == "NO_TABLE":
-        final_message += "<i>No data table found on Webb-site for today.</i>\n\n"
+    if isinstance(result, dict):
+        final_message += f"<i>Date Found: {result['date']}</i>\n"
+        final_message += f"<pre>{result['df'].to_string(index=False)}</pre>\n\n"
     else:
-        final_message += "<i>No significant broker moves.</i>\n\n"
+        final_message += "<i>No significant moves in the last 3 days.</i>\n\n"
 
 send_telegram(final_message)
