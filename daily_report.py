@@ -8,56 +8,50 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 def fetch_data(ticker):
+    # 1. Get the Issue ID (Standard across both)
+    search_url = f"https://webbsite.0xmd.com/dbpub/stocksearch.asp?s={ticker}"
     try:
-        # Step 1: Resolve Issue ID
-        search_url = f"https://webbsite.0xmd.com/dbpub/stocksearch.asp?s={ticker}"
         resp = requests.get(search_url, impersonate="chrome120", timeout=15)
         import re
         match = re.search(r'i=(\d+)', resp.url) or re.search(r'i=(\d+)', resp.text)
         if not match: return None
         issue_id = match.group(1)
 
-        # Step 2: Iterate back through 5 days
+        # 2. Loop through 5 days (Streamlit often just hits 'latest', but we need a date)
         for days_back in range(5):
             check_date = (datetime.datetime.utcnow() + datetime.timedelta(hours=8) - datetime.timedelta(days=days_back)).strftime('%Y-%m-%d')
             url = f"https://webbsite.0xmd.com/ccass/chldchg.asp?i={issue_id}&sort=chngdn&d={check_date}"
             
             time.sleep(random.uniform(2, 4))
             data_resp = requests.get(url, impersonate="chrome120", timeout=20)
-            soup = BeautifulSoup(data_resp.text, 'html.parser')
             
-            rows = soup.find_all('tr')
-            extracted_data = []
-
-            for row in rows:
-                cells = [c.get_text(strip=True) for c in row.find_all(['td', 'th'])]
-                if len(cells) < 3: continue
-
-                # Look for rows that have a number with a '+' or '-' or a large integer
-                # and don't contain 'Total'
-                row_text = " ".join(cells).lower()
-                if 'total' in row_text or 'participants' in row_text:
-                    continue
-
-                # Attempt to find the "Change" column by looking for numbers that aren't the Ticker
-                for i, cell in enumerate(cells):
-                    clean_val = cell.replace(',', '').replace('+', '')
-                    if clean_val.lstrip('-').isdigit():
-                        val = int(clean_val)
-                        if val != 0 and abs(val) > 100: # Ignore tiny rounding errors
-                            # We found a movement row! 
-                            # Usually: Name is Col 0 or 1, Change is Col 2 or 3
-                            name = cells[0] if i > 0 else cells[1]
-                            stake = cells[-1] if '%' in cells[-1] else "N/A"
-                            extracted_data.append({"Name": name[:20], "Change": val, "Stake": stake})
-                            break # Move to next row
+            # STREAMLIT LOGIC START: 
+            # Use 'bs4' flavor which is often the default in Streamlit's environment
+            tables = pd.read_html(io.StringIO(data_resp.text), flavor='bs4')
             
-            if extracted_data:
-                return {"date": check_date, "df": pd.DataFrame(extracted_data)}
-        
+            for df in tables:
+                # Force column names to string and lowercase
+                df.columns = [str(c).strip().lower() for c in df.columns]
+                
+                # Streamlit scrapers usually look for the 'Name' and 'Holding change' columns
+                name_col = next((c for c in df.columns if 'name' in c), None)
+                change_col = next((c for c in df.columns if 'change' in c and 'stake' not in c), None)
+                
+                if name_col and change_col:
+                    # Explicitly convert to string then clean to avoid 'NoneType' or 'Float' errors
+                    df[change_col] = df[change_col].astype(str).str.replace(',', '').replace('+', '')
+                    df[change_col] = pd.to_numeric(df[change_col], errors='coerce').fillna(0)
+                    
+                    # Filter for moves
+                    move_df = df[(df[change_col] != 0) & 
+                                (~df[name_col].str.contains('total|participants', case=False, na=False))].copy()
+                    
+                    if not move_df.empty:
+                        # Success! Format exactly like your Dashboard
+                        return {"date": check_date, "df": move_df[[name_col, change_col]]}
         return "NO_CHANGES"
     except Exception as e:
-        print(f"Aggressive Scraper Error: {e}")
+        print(f"Streamlit-Logic Error: {e}")
         return None
 
 def send_telegram(text):
