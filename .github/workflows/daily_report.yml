@@ -1,0 +1,28 @@
+name: Daily CCASS Email
+on:
+  schedule:
+    # 5:00 AM HKT is 9:00 PM UTC (previous day)
+    - cron: '0 21 * * *'
+  workflow_dispatch: # Allows you to run it manually for testing
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/set_python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install pandas curl_cffi lxml
+
+      - name: Run report script
+        env:
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+        run: python daily_report.py
