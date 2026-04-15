@@ -36,41 +36,42 @@ def get_issue_id(ticker):
 # 3. Sidebar Input
 with st.sidebar:
     st.header("Search Settings")
-    ticker_input = st.text_input("Enter HK Stock Code (e.g., 2497)", value="02497")
-    # Date is optional; leaving it blank pulls the latest available T+2 data
-    target_date = st.date_input("Target Date (Optional)", value=None)
+    with st.form("search_form"):
+        ticker_input = st.text_input("Enter HK Stock Code", value="02497")
+        target_date = st.date_input("Target Date (Optional)", value=None)
+        submit_button = st.form_submit_button("Fetch Data")
+
+if submit_button:
+    # ONLY trigger fetch_ccass_changes here
 
 # 4. Scraping Logic
+@st.cache_data(ttl=3600)  # Cache results for 1 hour to prevent 403s
 def fetch_ccass_changes(issue_id, date_val=None):
-    # Construct URL
+    # List of browser signatures to rotate
+    browsers = ["chrome120", "chrome119", "safari_17_0", "edge_120"]
+    
     base_url = f"https://webbsite.0xmd.com/ccass/chldchg.asp?i={issue_id}&sort=chngdn"
     if date_val:
         base_url += f"&d={date_val}"
     
-    # Randomize the User-Agent slightly to avoid a static fingerprint
-    user_agents = [
-        "chrome110", "chrome116", "chrome120", "safari_17_0"
-    ]
-    selected_browser = random.choice(user_agents)
-
     headers = {
         'Referer': f'https://webbsite.0xmd.com/ccass/choldings.asp?i={issue_id}',
-        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Language': 'en-HK,en;q=0.9,zh-HK;q=0.8,zh;q=0.7', # Better for HK sites
     }
 
     try:
-        # Add a tiny random delay (human-like behavior)
-        time.sleep(random.uniform(1.0, 3.0))
+        # Crucial: Sleep for a random interval to break bot-like timing
+        time.sleep(random.uniform(2.0, 5.0)) 
         
         resp = requests.get(
             base_url, 
             headers=headers, 
-            impersonate=selected_browser, 
+            impersonate=random.choice(browsers), 
             timeout=25
         )
         
         if resp.status_code == 403:
-            return "ACCESS_DENIED_BY_WEBSITE", None
+            return "403_BLOCK", None
             
         tables = pd.read_html(io.StringIO(resp.text))
         # ... (rest of your existing logic for table parsing)
