@@ -12,39 +12,47 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 def fetch_data(ticker):
-    # Calculate HK Today's Date
     hk_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
     today_str = hk_now.strftime('%Y-%m-%d')
     
+    # 1. Get Issue ID
     search_url = f"https://webbsite.0xmd.com/dbpub/stocksearch.asp?s={ticker}"
     try:
-        # Step 1: Find Issue ID
         resp = requests.get(search_url, impersonate="chrome120", timeout=15)
         import re
         match = re.search(r'i=(\d+)', resp.url) or re.search(r'i=(\d+)', resp.text)
         if not match: return None
-        
         issue_id = match.group(1)
+        
+        # 2. Targeted URL with the date you specified
         url = f"https://webbsite.0xmd.com/ccass/chldchg.asp?i={issue_id}&sort=chngdn&d={today_str}"
         
-        # Step 2: Fetch Table
         time.sleep(random.uniform(3, 6))
         data_resp = requests.get(url, impersonate="chrome120", timeout=20)
         
-        # Safety Check: Does the page actually have a table?
-        if "<table" not in data_resp.text.lower():
-            return "NO_TABLE"
-
+        # 3. Robust Table Search
         tables = pd.read_html(io.StringIO(data_resp.text))
-        
         for df in tables:
-            if 'Change' in df.columns:
+            # Look for any column that sounds like 'Change' (case-insensitive)
+            change_col = next((c for c in df.columns if 'change' in str(c).lower()), None)
+            
+            if change_col and 'Name' in df.columns:
+                # Filter out garbage rows
                 df = df[~df['Name'].isin(['Total', 'Unnamed Investor Participants'])].copy()
-                df['Change'] = pd.to_numeric(df['Change'].astype(str).str.replace(',', ''), errors='coerce')
-                df = df[df['Change'] != 0].dropna(subset=['Name'])
+                
+                # Convert change column to numeric
+                df[change_col] = pd.to_numeric(df[change_col].astype(str).str.replace(',', ''), errors='coerce')
+                
+                # Filter for actual movement
+                df = df[df[change_col] != 0].dropna(subset=['Name'])
                 
                 if not df.empty:
-                    return df[['Name', 'Change', 'Stake Δ %']]
+                    # Rename for consistent display in Telegram
+                    df = df.rename(columns={change_col: 'Change'})
+                    # Return essential columns (adjust names if Stake % is different)
+                    cols = [c for c in ['Name', 'Change', 'Stake Δ %', '% Stake Δ'] if c in df.columns]
+                    return df[cols]
+                    
         return "NO_CHANGES"
         
     except Exception as e:
