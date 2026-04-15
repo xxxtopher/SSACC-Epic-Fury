@@ -20,7 +20,7 @@ def fetch_data(ticker):
         if not match: return None
         issue_id = match.group(1)
 
-        # Look back 5 days to be absolutely safe (covers long weekends)
+        # Scan back 5 days
         for days_back in range(5):
             check_date = (datetime.datetime.utcnow() + datetime.timedelta(hours=8) - datetime.timedelta(days=days_back)).strftime('%Y-%m-%d')
             url = f"https://webbsite.0xmd.com/ccass/chldchg.asp?i={issue_id}&sort=chngdn&d={check_date}"
@@ -31,34 +31,38 @@ def fetch_data(ticker):
             if "<table" not in data_resp.text.lower():
                 continue
 
-            # Read ALL tables on the page
-            tables = pd.read_html(io.StringIO(data_resp.text))
+            # NEW: Clean the HTML text before parsing to remove hidden formatting that blocks pandas
+            clean_html = data_resp.text.replace('&nbsp;', '').replace('+', '')
+            tables = pd.read_html(io.StringIO(clean_html))
+            
             for df in tables:
-                # 1. Standardize columns to lowercase for easy searching
+                # Standardize column names
                 df.columns = [str(c).strip().lower() for c in df.columns]
                 
-                # 2. Look for 'name' and any column containing 'change'
+                # Find the 'name' column and any 'change' column
                 name_col = next((c for c in df.columns if 'name' in c), None)
                 change_col = next((c for c in df.columns if 'change' in c), None)
-                stake_col = next((c for c in df.columns if 'stake' in c and '%' in c), None)
-
+                
                 if name_col and change_col:
-                    # Clean the data
-                    df[change_col] = pd.to_numeric(df[change_col].astype(str).str.replace(',', ''), errors='coerce')
+                    # DEEP CLEAN: Remove commas and everything except numbers/minus signs
+                    df[change_col] = df[change_col].astype(str).str.replace(r'[^-0-9.]', '', regex=True)
+                    df[change_col] = pd.to_numeric(df[change_col], errors='coerce').fillna(0)
                     
-                    # Filter for moves that aren't zero and aren't the "Total" row
+                    # Filter: Must have a move, and Name must not be empty or 'Total'
                     move_df = df[(df[change_col] != 0) & 
-                                (~df[name_col].str.contains('total|participants', case=False, na=False))].copy()
+                                (~df[name_col].str.contains('total|participants|investor', case=False, na=False))].copy()
                     
                     if not move_df.empty:
-                        # Success! Reformat for the message
-                        display_df = move_df[[name_col, change_col, stake_col or change_col]].copy()
+                        # Find stake column if it exists
+                        stake_col = next((c for c in df.columns if '%' in c or 'stake' in c), change_col)
+                        
+                        display_df = move_df[[name_col, change_col, stake_col]].copy()
                         display_df.columns = ['Name', 'Change', 'Stake %']
                         return {"date": check_date, "df": display_df}
         
         return "NO_CHANGES"
     except Exception as e:
-        print(f"Scraper Error for {ticker}: {e}")
+        print(f"Deep Scan Error for {ticker}: {e}")
         return None
 
 def send_telegram(text):
