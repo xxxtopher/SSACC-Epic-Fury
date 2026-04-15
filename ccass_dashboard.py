@@ -36,10 +36,7 @@ def get_issue_id(ticker):
 # 4. Scraping Logic
 @st.cache_data(ttl=3600)  # Cache for 1 hour
 def fetch_ccass_changes(issue_id, date_val=None):
-    # Expanded browser list for better rotation
     browsers = ["chrome", "chrome110", "chrome120", "edge101"]
-    
-    # Webb-site change URL
     base_url = f"https://webbsite.0xmd.com/ccass/chldchg.asp?i={issue_id}&sort=chngdn"
     if date_val:
         base_url += f"&d={date_val}"
@@ -50,50 +47,42 @@ def fetch_ccass_changes(issue_id, date_val=None):
     }
 
     try:
-        # Random sleep to mimic human browsing (2 to 5 seconds)
         time.sleep(random.uniform(2.0, 5.0))
-
-        # Select a browser and use a fallback if one fails
-        selected_browser = random.choice(browsers) 
         
-        # Use curl_cffi to bypass TLS fingerprinting (403 fix)
-        resp = requests.get(
-            base_url, 
-            headers=headers, 
-            impersonate=random.choice(browsers), 
-            timeout=25
-        )
-    except Exception:
-            # Fallback to standard 'chrome' if a specific version fails
+        # 1. First Attempt
+        try:
+            resp = requests.get(
+                base_url, 
+                headers=headers, 
+                impersonate=random.choice(browsers), 
+                timeout=25
+            )
+        except Exception:
+            # 2. Fallback Attempt (only runs if 1st fails)
             resp = requests.get(
                 base_url, 
                 headers=headers, 
                 impersonate="chrome", 
                 timeout=25
             )
-        
-        # Parse all tables on the page
-        # Using io.StringIO to avoid future warnings from Pandas
+
+        # 3. Check for 403 before parsing
+        if resp.status_code == 403:
+            return "403_BLOCK", None
+
+        # 4. Parsing Logic (OUTSIDE the except block so it always runs)
         tables = pd.read_html(io.StringIO(resp.text))
         
         for df in tables:
-            # Check for the correct data table
             if 'Change' in df.columns:
-                # 1. Drop the summary total row
                 df = df[df['Name'] != 'Total'].copy()
-                
-                # 2. Clean numeric data
                 df['Change'] = pd.to_numeric(df['Change'].astype(str).str.replace(',', ''), errors='coerce')
-                
-                # 3. Filter for active moves and valid names
                 df = df[df['Change'] != 0].dropna(subset=['Name'])
-                
                 return "SUCCESS", df
                 
         return "NO_TABLE", None
 
     except Exception as e:
-        # Return the error string so Streamlit can display it
         return f"Error: {str(e)}", None
 
 # 3. Sidebar Input
