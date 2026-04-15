@@ -24,13 +24,36 @@ index_data = load_index()
 
 def get_issue_id(ticker):
     target = ticker.zfill(5)
-    # Check if ticker is a direct key
+    
+    # 1. Check local JSON first (Performance)
     if target in index_data:
         return index_data[target].get('filename')
-    # Search within values if keys are "ID-XXXX"
-    for key, val in index_data.items():
-        if isinstance(val, dict) and val.get('ticker') == target:
-            return val.get('filename')
+    
+    # 2. If not found, try to "discover" it from the website
+    st.info(f"Ticker {target} not in local index. Attempting to discover Issue ID...")
+    
+    # Webb-site's internal search endpoint
+    search_url = f"https://webbsite.0xmd.com/dbpub/stocksearch.asp?s={target}"
+    
+    try:
+        # Use the same stealthy request logic
+        resp = requests.get(search_url, impersonate="chrome120", timeout=10)
+        
+        # We look for the pattern "i=XXXX" in the redirected URL or the page text
+        import re
+        # Search for digits following "i=" in the response URL or content
+        match = re.search(r'i=(\d+)', resp.url) or re.search(r'i=(\d+)', resp.text)
+        
+        if match:
+            new_id = match.group(1)
+            # Add to local index so we don't scrape it again this session
+            index_data[target] = {"filename": new_id, "ticker": target}
+            st.success(f"Found new Issue ID: {new_id} for {target}")
+            return new_id
+            
+    except Exception as e:
+        st.error(f"Discovery failed: {e}")
+        
     return None
 
 # 4. Scraping Logic
