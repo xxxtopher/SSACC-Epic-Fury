@@ -11,7 +11,11 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 def fetch_data(ticker):
-    # Search trick to find Issue ID dynamically
+    # Get today's date in YYYY-MM-DD format
+    # Note: Since you're in Vancouver, we add 1 day or use UTC 
+    # to align with Hong Kong morning time.
+    today = (datetime.datetime.utcnow() + datetime.timedelta(hours=8)).strftime('%Y-%m-%d')
+    
     search_url = f"https://webbsite.0xmd.com/dbpub/stocksearch.asp?s={ticker}"
     try:
         resp = requests.get(search_url, impersonate="chrome120", timeout=15)
@@ -20,7 +24,11 @@ def fetch_data(ticker):
         if not match: return None
         
         issue_id = match.group(1)
-        url = f"https://webbsite.0xmd.com/ccass/chldchg.asp?i={issue_id}&sort=chngdn"
+        
+        # NEW: Explicitly add the date parameter to the URL
+        url = f"https://webbsite.0xmd.com/ccass/chldchg.asp?i={issue_id}&sort=chngdn&d={today}"
+        
+        print(f"Checking URL: {url}") # This will show in your GitHub logs
         
         time.sleep(random.uniform(3, 7))
         data_resp = requests.get(url, impersonate="chrome120", timeout=20)
@@ -28,11 +36,15 @@ def fetch_data(ticker):
         
         for df in tables:
             if 'Change' in df.columns:
-                df = df[df['Name'] != 'Total'].copy()
+                # Basic cleaning
+                df = df[~df['Name'].isin(['Total', 'Unnamed Investor Participants'])].copy()
                 df['Change'] = pd.to_numeric(df['Change'].astype(str).str.replace(',', ''), errors='coerce')
-                # Filter for active movers
+                
+                # Keep only rows where a move actually happened
                 df = df[df['Change'] != 0].dropna(subset=['Name'])
-                return df[['Name', 'Change', 'Stake Δ %']]
+                
+                if not df.empty:
+                    return df[['Name', 'Change', 'Stake Δ %']]
     except Exception as e:
         print(f"Error fetching {ticker}: {e}")
     return None
